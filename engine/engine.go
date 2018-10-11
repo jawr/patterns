@@ -11,6 +11,8 @@ type HandlerFunc func(Item)
 
 type Engine struct {
 	BufferSize int
+	ConcurrentHandlers int
+	ConcurrentWorkers int
 
 	running int32
 	runningMtx sync.Mutex
@@ -29,7 +31,7 @@ type Engine struct {
 	stoppersMtx sync.Mutex
 
 	handlers  []HandlerFunc
-	handlersMtx sync.Mutex
+	handlersMtx sync.RWMutex
 }
 
 // Engines exist for as long as they are run
@@ -53,6 +55,14 @@ func (e *Engine) Start() error {
 	e.incoming = make(chan Item, e.BufferSize)
 
 	go func() {
+
+		// semaphore for workers
+		if e.ConcurrentWorkers == 0 {
+			e.ConcurrentWorkers = 1
+		}
+
+		sem := make(chan struct{}, e.ConcurrentWorkers)
+
 MAIN:
 		for {
 			select {
@@ -82,21 +92,33 @@ MAIN:
 				break MAIN
 
 			case i := <-e.incoming:
-				// potential long wait for the addHandlers (which should be an init thing usually), but better
-				// than the performance hit with allocating and locking
-				e.handlersMtx.Lock()
-				// run synchronously
-				var hwg sync.WaitGroup
-				for _, h := range e.handlers {
-					hwg.Add(1)
-					go func(h HandlerFunc) {
-						defer hwg.Done()
-						h(i)
-					}(h)
-				}
-				e.handlersMtx.Unlock()
 
-				hwg.Wait()
+				sem <- struct{}{}
+
+				go func(i Item) {
+					var hwg sync.WaitGroup
+
+					e.handlersMtx.RLock()
+					for _, h := range e.handlers {
+
+						// check if we do this concurrently
+						if e.ConcurrentHandlers > 1 {
+							hwg.Add(1)
+							go func(h HandlerFunc) {
+								defer hwg.Done()
+								h(i)
+							}(h)
+
+						} else {
+							h(i)
+						}
+					}
+					e.handlersMtx.RUnlock()
+
+					hwg.Wait()
+
+					<-sem
+				}(i)
 			}
 		}
 
