@@ -3,6 +3,7 @@ package engine
 import (
 	"testing"
 	"sync"
+	"fmt"
 	"sync/atomic"
 )
 
@@ -107,7 +108,7 @@ func TestDrain(t *testing.T) {
 	var count int32
 	var wg sync.WaitGroup
 
-	var expected int32 = 100
+	var expected int32 = 10
 
 	e := createEngine(func(i Item) {
 		atomic.AddInt32(&count, 1)
@@ -122,7 +123,7 @@ func TestDrain(t *testing.T) {
 
 	for i := 0; i < int(expected); i++ {
 		wg.Add(1)
-		go e.Add(struct{}{})
+		e.Add(struct{}{})
 	}
 
 	err = e.Stop()
@@ -138,4 +139,29 @@ func TestDrain(t *testing.T) {
 	}
 }
 
+
+func TestStoppers(t *testing.T) {
+	e := createEngine(func(i Item) {})
+
+	err := e.Start()
+	if err != nil {
+		t.Errorf("Failed to start")
+	}
+
+	s := e.GetStopper()
+	fmt.Printf("got stopper %v", s)
+	go func() {
+		for {
+			if s.ShouldStop() {
+				s.Stopped()
+				return
+			}
+		}
+	}()
+
+	err = e.Stop()
+	if err != nil {
+		t.Errorf("Failed to stop")
+	}
+}
 

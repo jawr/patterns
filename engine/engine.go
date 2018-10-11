@@ -8,6 +8,7 @@ import (
 type Item interface {}
 type HandleFunc func(Item)
 
+
 type Engine struct {
 	BufferSize int
 
@@ -23,6 +24,9 @@ type Engine struct {
 	stopped chan struct{}
 
 	incoming chan Item
+
+	stoppers []*Stopper
+	stoppersMtx sync.Mutex
 
 	handlers  []HandleFunc
 	handlersMtx sync.Mutex
@@ -67,6 +71,14 @@ MAIN:
 				}
 				e.handlersMtx.Unlock()
 
+				// tell the stoppers to quit
+				e.stoppersMtx.Lock()
+				for _, s := range e.stoppers {
+					s.stop <- struct{}{}
+					<-s.stopped
+				}
+				e.stoppersMtx.Unlock()
+
 				break MAIN
 
 			case i := <-e.incoming:
@@ -105,6 +117,7 @@ func (e *Engine) Stop() error {
 	e.stoppingMtx.Unlock()
 
 	e.stop <- struct{}{}
+
 	<-e.stopped
 
 	return nil
@@ -114,6 +127,11 @@ func (e *Engine) Add(i Item) error {
 	if atomic.LoadInt32(&e.running) == 0 {
 		return ErrNotRunning
 	}
+	if atomic.LoadInt32(&e.stopping) == 1 {
+		return ErrStopping
+	}
+
+
 	e.incoming <- i
 	return nil
 }
@@ -122,4 +140,15 @@ func (e *Engine) RegisterHandler(h HandleFunc) {
 	e.handlersMtx.Lock()
 	e.handlers = append(e.handlers, h)
 	e.handlersMtx.Unlock()
+}
+
+func (e *Engine) GetStopper() *Stopper {
+	s := &Stopper{
+		stop: make(chan struct{}, 0),
+		stopped: make(chan struct{}, 0),
+	}
+	e.stoppersMtx.Lock()
+	e.stoppers = append(e.stoppers, s)
+	e.stoppersMtx.Unlock()
+	return s
 }

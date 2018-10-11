@@ -4,6 +4,7 @@ import (
 	"fmt"
 )
 
+var ErrStopping = Errorf("engine: stopping")
 var ErrNotRunning = Errorf("engine: not running")
 var ErrAlreadyRunning = Errorf("engine: already running")
 var ErrAlreadyStopping = Errorf("engine: already stopping")
