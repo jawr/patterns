@@ -16,7 +16,7 @@ type Suzuki struct {
 
 func createEngine(h HandlerFunc) *Suzuki {
 	s := Suzuki{}
-	s.RegisterHandler(h)
+	s.RegisterHandler("test", h)
 	return &s
 }
 
@@ -35,13 +35,15 @@ func TestStartSendStop(t *testing.T) {
 		wg.Done()
 	})
 
+	e.Workers = 10
+
 	err := e.Start()
 	if err != nil {
 		t.Errorf("Failed to start")
 	}
 
 	wg.Add(1)
-	err = e.Add(M{"pass"})
+	err = e.Add("test", M{"pass"})
 	if err != nil {
 		t.Errorf("Failed to add item")
 	}
@@ -88,7 +90,7 @@ func TestDoubleStop(t *testing.T) {
 func TestAddNotRunning(t *testing.T) {
 	e := createEngine(func(i Item) {})
 
-	err := e.Add(M{"pass"})
+	err := e.Add("test", M{"pass"})
 	if err != ErrNotRunning {
 		t.Errorf("Can add whilest not running")
 	}
@@ -122,7 +124,7 @@ func TestDrain(t *testing.T) {
 
 	for i := 0; i < int(expected); i++ {
 		wg.Add(1)
-		e.Add(struct{}{})
+		e.Add("test", struct{}{})
 	}
 
 	err = e.Stop()
@@ -160,6 +162,53 @@ func TestStoppers(t *testing.T) {
 	err = e.Stop()
 	if err != nil {
 		t.Errorf("Failed to stop")
+	}
+}
+
+
+func TestDifferentHandlers(t *testing.T) {
+
+	var wg sync.WaitGroup
+
+	wg.Add(4)
+
+	var test, a, b, c bool
+
+	e := createEngine(func(i Item) { 
+		test = true 
+		wg.Done()
+	})
+	e.RegisterHandler("a", func(i Item) { 
+		a = true 
+		wg.Done()
+	})
+	e.RegisterHandler("b", func(i Item) {
+		b = true 
+		wg.Done()
+	})
+	e.RegisterHandler("c", func(i Item) {
+		c = true 
+		wg.Done()
+	})
+
+	err := e.Start()
+	if err != nil {
+		t.Errorf("Failed to start")
+	}
+
+	for _, i := range []string{"test", "a", "b", "c"} {
+		e.Add(i, struct{}{})
+	}
+
+	err = e.Stop()
+	if err != nil {
+		t.Errorf("Failed to stop")
+	}
+
+	wg.Wait()
+
+	if !(test && a && b && c) {
+		t.Errorf("expected all to be true test: %t a: %t b: %t c: %t", test, a, b, c)
 	}
 }
 

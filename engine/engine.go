@@ -9,10 +9,14 @@ type Item interface {}
 type HandlerFunc func(Item)
 
 
+type wrapper struct{
+	handler string
+	item Item
+}
+
 type Engine struct {
 	BufferSize int
-	ConcurrentHandlers int
-	ConcurrentWorkers int
+	Workers int
 
 	running int32
 	runningMtx sync.Mutex
@@ -25,13 +29,20 @@ type Engine struct {
 	stop chan struct{}
 	stopped chan struct{}
 
-	incoming chan Item
+	incoming chan wrapper
 
 	stoppers []*Stopper
 	stoppersMtx sync.Mutex
 
-	handlers  []HandlerFunc
+	handlers  map[string]HandlerFunc
 	handlersMtx sync.RWMutex
+	handlersOnce sync.Once
+}
+
+func (e *Engine) initHandlers() {
+	e.handlersOnce.Do(func() {
+		e.handlers = make(map[string]HandlerFunc, 0)
+	})
 }
 
 // Engines exist for as long as they are run
@@ -52,16 +63,18 @@ func (e *Engine) Start() error {
 	e.stop = make(chan struct{}, 0)
 	e.stopped = make(chan struct{}, 0)
 
-	e.incoming = make(chan Item, e.BufferSize)
+	e.incoming = make(chan wrapper, e.BufferSize)
+
+	e.initHandlers()
 
 	go func() {
 
 		// semaphore for workers
-		if e.ConcurrentWorkers == 0 {
-			e.ConcurrentWorkers = 1
+		if e.Workers == 0 {
+			e.Workers = 1
 		}
 
-		sem := make(chan struct{}, e.ConcurrentWorkers)
+		sem := make(chan struct{}, e.Workers)
 
 MAIN:
 		for {
@@ -91,34 +104,22 @@ MAIN:
 
 				break MAIN
 
-			case i := <-e.incoming:
+			case w := <-e.incoming:
+
+				e.handlersMtx.RLock()
+				fn, ok := e.handlers[w.handler]
+				e.handlersMtx.RUnlock()
+
+				if !ok {
+					continue
+				}
 
 				sem <- struct{}{}
 
 				go func(i Item) {
-					var hwg sync.WaitGroup
-
-					e.handlersMtx.RLock()
-					for _, h := range e.handlers {
-
-						// check if we do this concurrently
-						if e.ConcurrentHandlers > 1 {
-							hwg.Add(1)
-							go func(h HandlerFunc) {
-								defer hwg.Done()
-								h(i)
-							}(h)
-
-						} else {
-							h(i)
-						}
-					}
-					e.handlersMtx.RUnlock()
-
-					hwg.Wait()
-
+					fn(i)
 					<-sem
-				}(i)
+				}(w.item)
 			}
 		}
 
@@ -153,7 +154,7 @@ func (e *Engine) Stop() error {
 	return nil
 }
 
-func (e *Engine) Add(i Item) error {
+func (e *Engine) Add(h string, i Item) error {
 	if atomic.LoadInt32(&e.running) == 0 {
 		return ErrNotRunning
 	}
@@ -161,14 +162,16 @@ func (e *Engine) Add(i Item) error {
 		return ErrStopping
 	}
 
+	e.incoming <- wrapper{h, i}
 
-	e.incoming <- i
 	return nil
 }
 
-func (e *Engine) RegisterHandler(h HandlerFunc) {
+func (e *Engine) RegisterHandler(h string, fn HandlerFunc) {
+	e.initHandlers()
+
 	e.handlersMtx.Lock()
-	e.handlers = append(e.handlers, h)
+	e.handlers[h] = fn
 	e.handlersMtx.Unlock()
 }
 
