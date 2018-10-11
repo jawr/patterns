@@ -6,7 +6,7 @@ import (
 )
 
 type Item interface {}
-type HandleFunc func(Item)
+type HandlerFunc func(Item)
 
 
 type Engine struct {
@@ -28,7 +28,7 @@ type Engine struct {
 	stoppers []*Stopper
 	stoppersMtx sync.Mutex
 
-	handlers  []HandleFunc
+	handlers  []HandlerFunc
 	handlersMtx sync.Mutex
 }
 
@@ -85,10 +85,18 @@ MAIN:
 				// potential long wait for the addHandlers (which should be an init thing usually), but better
 				// than the performance hit with allocating and locking
 				e.handlersMtx.Lock()
+				// run synchronously
+				var hwg sync.WaitGroup
 				for _, h := range e.handlers {
-					h(i)
+					hwg.Add(1)
+					go func(h HandlerFunc) {
+						defer hwg.Done()
+						h(i)
+					}(h)
 				}
 				e.handlersMtx.Unlock()
+
+				hwg.Wait()
 			}
 		}
 
@@ -136,7 +144,7 @@ func (e *Engine) Add(i Item) error {
 	return nil
 }
 
-func (e *Engine) RegisterHandler(h HandleFunc) {
+func (e *Engine) RegisterHandler(h HandlerFunc) {
 	e.handlersMtx.Lock()
 	e.handlers = append(e.handlers, h)
 	e.handlersMtx.Unlock()

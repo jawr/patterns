@@ -3,7 +3,6 @@ package engine
 import (
 	"testing"
 	"sync"
-	"fmt"
 	"sync/atomic"
 )
 
@@ -15,7 +14,7 @@ type Suzuki struct {
 	Engine
 }
 
-func createEngine(h HandleFunc) *Suzuki {
+func createEngine(h HandlerFunc) *Suzuki {
 	s := Suzuki{}
 	s.RegisterHandler(h)
 	return &s
@@ -149,7 +148,6 @@ func TestStoppers(t *testing.T) {
 	}
 
 	s := e.GetStopper()
-	fmt.Printf("got stopper %v", s)
 	go func() {
 		for {
 			if s.ShouldStop() {
